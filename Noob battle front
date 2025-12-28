@@ -1,0 +1,182 @@
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+local player = Players.LocalPlayer
+local enabled = false
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local humanoid = character:WaitForChild("Humanoid")
+local camera = workspace.CurrentCamera
+
+local stepConn, renderConn, heartbeatConn
+local currentTargetPos = nil
+
+-- Respawn handler
+player.CharacterAdded:Connect(function(newChar)
+    character = newChar
+    humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+    humanoid = character:WaitForChild("Humanoid")
+end)
+
+-- Draggable GUI Toggle
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "FlyGui"
+screenGui.Parent = game.CoreGui
+screenGui.ResetOnSpawn = false
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 200, 0, 50)
+frame.Position = UDim2.new(0, 10, 0, 10)
+frame.BackgroundColor3 = Color3.new(0, 0, 0)
+frame.BackgroundTransparency = 0.3
+frame.Active = true
+frame.Draggable = true
+frame.Parent = screenGui
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(1, 0, 1, 0)
+toggleBtn.Text = "NOCLIP + AIM + DOWN ENEMY: OFF"
+toggleBtn.BackgroundColor3 = Color3.new(1, 0, 0)
+toggleBtn.TextColor3 = Color3.new(1, 1, 1)
+toggleBtn.TextScaled = true
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.Parent = frame
+
+toggleBtn.MouseButton1Click:Connect(function()
+    enabled = not enabled
+    toggleBtn.Text = "NOCLIP + AIM + DOWN ENEMY: " .. (enabled and "ON" or "OFF")
+    toggleBtn.BackgroundColor3 = enabled and Color3.new(0, 1, 0) or Color3.new(1, 0, 0)
+    
+    if enabled then
+        -- God mode setup
+        pcall(function()
+            humanoid.MaxHealth = math.huge
+            humanoid.Health = math.huge
+            humanoid.JumpPower = 200
+            humanoid.WalkSpeed = 100
+        end)
+        
+        -- Connect loops
+        stepConn = RunService.Stepped:Connect(function()
+            -- Noclip
+            for _, v in pairs(character:GetDescendants()) do
+                if v:IsA("BasePart") then
+                    v.CanCollide = false
+                end
+            end
+            -- God health loop
+            pcall(function()
+                humanoid.Health = math.huge
+            end)
+        end)
+        
+        renderConn = RunService.RenderStepped:Connect(function()
+            -- Smooth aim lock
+            if currentTargetPos then
+                camera.CFrame = CFrame.lookAt(camera.CFrame.Position, currentTargetPos)
+            end
+        end)
+        
+        heartbeatConn = RunService.Heartbeat:Connect(mainLoop)
+    else
+        -- Disconnect
+        if stepConn then stepConn:Disconnect() end
+        if renderConn then renderConn:Disconnect() end
+        if heartbeatConn then heartbeatConn:Disconnect() end
+        currentTargetPos = nil
+    end
+end)
+
+-- Nearest enemy
+local function getNearestEnemy()
+    local enemies = workspace:FindFirstChild("Enemies")
+    if not enemies then return nil end
+    local closest, dist = nil, math.huge
+    for _, enemy in pairs(enemies:GetChildren()) do
+        local eHRP = enemy:FindFirstChild("HumanoidRootPart")
+        if eHRP then
+            local d = (humanoidRootPart.Position - eHRP.Position).Magnitude
+            if d < dist then dist = d; closest = enemy end
+        end
+    end
+    return closest
+end
+
+-- Hitbox
+local function addHitbox(enemy)
+    if enemy and not enemy:FindFirstChild("Hitbox") then
+        local hitbox = Instance.new("Part")
+        hitbox.Name = "Hitbox"
+        hitbox.Size = Vector3.new(50, 50, 50)
+        hitbox.Transparency = 1
+        hitbox.CanCollide = false
+        hitbox.Anchored = false
+        hitbox.Massless = true
+        hitbox.CFrame = enemy.HumanoidRootPart.CFrame
+        hitbox.Parent = enemy
+        local weld = Instance.new("WeldConstraint")
+        weld.Part0 = hitbox
+        weld.Part1 = enemy.HumanoidRootPart
+        weld.Parent = hitbox
+    end
+end
+
+-- Fly Y+7 fast
+local function flyTo(target)
+    if not target or not target.Parent then return end
+    local eHRP = target.HumanoidRootPart
+    local distance = (humanoidRootPart.Position - eHRP.Position).Magnitude
+    local speed = 600
+    local time = math.max(0.08, distance / speed)
+    local targetPos = Vector3.new(eHRP.Position.X, eHRP.Position.Y + 7, eHRP.Position.Z)
+    local ti = TweenInfo.new(time, Enum.EasingStyle.Linear)
+    local tween = TweenService:Create(humanoidRootPart, ti, {CFrame = CFrame.new(targetPos, eHRP.Position)})
+    tween:Play()
+    tween.Completed:Wait()
+end
+
+-- Fast M1
+local function fastM1()
+    for _ = 1, 4 do
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+        task.wait(0.04)
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+        task.wait(0.04)
+    end
+end
+
+-- Ability spam (downs enemies fast)
+local function spamAbilities()
+    local keys = {"Q", "E", "R", "F", "T", "G", "H", "Y", "Z", "X", "C", "V"}
+    for _, k in ipairs(keys) do
+        pcall(function()
+            local keyCode = Enum.KeyCode[k]
+            VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+            task.wait(0.015)
+            VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+        end)
+    end
+end
+
+-- Main loop
+function mainLoop()
+    local enemy = getNearestEnemy()
+    if enemy then
+        addHitbox(enemy)
+        local eHRP = enemy.HumanoidRootPart
+        local dist = (humanoidRootPart.Position - eHRP.Position).Magnitude
+        currentTargetPos = eHRP.Position  -- For aim
+        
+        if dist > 10 then
+            flyTo(enemy)
+        else
+            fastM1()
+            spamAbilities()
+            task.wait(0.15)
+        end
+    else
+        currentTargetPos = nil
+    end
+end
